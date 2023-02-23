@@ -1,0 +1,62 @@
+- hosts: target
+  become: true
+  tasks:
+    - name: Disable automatic updates
+      apt:
+        name: unattended-upgrades
+        state: absent
+
+    - name: Configure dummy network interface
+      copy:
+        src: files/replay.network
+        dest: /etc/network/interfaces.d/replay
+
+    - name: Add forescout user
+      user:
+        name: forescout
+        generate_ssh_key: yes
+        ssh_key_bits: 2048
+        ssh_key_file: /home/forescout/.ssh/id_rsa
+
+    - name: Download pcap file to controller
+      get_url:
+      url: "{{ var_pcap_file_url }}"
+      dest: /home/ansible/pcap_file.pcap
+
+      
+    - name: Copy pcap file to target
+      copy:
+        src: /home/ansible/pcap_file.pcap
+        dest: /home/forescout/pcap_file.pcap
+        remote_src: yes
+        owner: forescout
+        group: forescout
+        mode: 0644
+
+    - name: Start tcpreplay process
+      shell: "sudo -u forescout tcpreplay -i replay -l 0 /home/forescout/capture.pcap"
+
+    - name: Start tcpdump process
+      shell: "sudo -u forescout tcpdump -i replay -w /home/forescout/capture.pcap"
+
+- hosts: target
+  become: true
+  tasks:
+    - name: Retrieve current size of capture.pcap
+      shell: "du -h /home/forescout/capture.pcap | awk '{print $1}'"
+      register: capture_pcap_size
+
+    - name: Print current size of capture.pcap
+      debug:
+        msg: "Current size of capture.pcap is {{ capture_pcap_size.stdout }}"
+
+    - name: Remove capture.pcap
+      file:
+        path: /home/forescout/capture.pcap
+        state: absent
+
+    - name: Stop tcpreplay process
+      shell: "killall tcpreplay"
+
+    - name: Stop tcpdump process
+      shell: "killall tcpdump"
