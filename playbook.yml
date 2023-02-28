@@ -1,6 +1,7 @@
 - hosts: target
   become: true
   tasks:
+
     - name: Disable automatic updates
       shell: apt-get remove -y unattended-upgrades
       register: apt_lock
@@ -8,27 +9,33 @@
       retries: 5
       delay: 10
       
-      
-      # apt:
-      #   name: unattended-upgrades
-      #   state: absent
-
-    # - name: Configure dummy network interface
-    #   copy:
-    #     src: files/replay.network
-    #     dest: /etc/network/interfaces.d/replay
-
-    - name: Create 'replay' network interface file
-      copy:
-        content: |
-          # 'replay' network interface
-          auto replay
-          iface replay inet manual
-          pre-up ip link add replay type dummy
-          pre-up ip link set replay promisc on
-          post-down ip link del replay
-        dest: /etc/network/interfaces.d/replay
     
+    - name: Check if dummy interface 'replay' exists
+      shell: "ip link show replay"
+      register: replay_interface_status
+      ignore_errors: true
+      changed_when: false
+
+    - name: Create dummy network interface 'replay'
+      command: ip link add replay type dummy
+      become: true
+      when: replay_interface_status.rc != 0
+
+    - name: Disable network interface 'replay'
+      command: ip link set dev replay down
+      become: true
+      when: replay_interface_status.rc != 0
+
+    - name: Enable promiscuous mode for network interface 'replay'
+      command: ip link set dev replay promisc on
+      become: true
+      when: replay_interface_status.rc != 0
+
+    - name: Remove IP address from network interface 'replay'
+      command: ip addr flush dev replay
+      become: true
+      when: replay_interface_status.rc != 0
+
 
 ########################################
 
@@ -45,13 +52,14 @@
         owner: forescout
         mode: '0600'
 
-    # - name: Copy public key to authorized_keys
-    #   ansible.builtin.copy:
-    #     content: "{{ lookup('file', '/home/forescout/.ssh/id_rsa.pub') }}"
-    #     dest: "/home/forescout/.ssh/authorized_keys"
-    #     owner: forescout
-    #     mode: '0600'
-
+    - name: Add new user to sudoers
+      lineinfile:
+        path: /etc/sudoers
+        line: 'myuser ALL=(ALL) NOPASSWD: ALL'
+        validate: 'visudo -cf %s'
+        state: present
+        backup: yes
+    
     - name: Disable password-based login
       ansible.builtin.lineinfile:
         path: /etc/ssh/sshd_config
@@ -68,35 +76,25 @@
         name: sshd
         state: reloaded
 
-
-
-    # - name: Add forescout user
-    #   user:
-    #     name: forescout
-    #     generate_ssh_key: yes
-    #     ssh_key_bits: 2048
-    #     ssh_key_file: /home/forescout/.ssh/id_rsa
-
-
 ##################################################
 
 
-    # - name: Download PCAP file to controller
-    #   get_url:
-    #     url: "https://wiki.wireshark.org/uploads/__moin_import__/attachments/SampleCaptures/bfd-raw-auth-md5.pcap"
-    #     dest: "/tmp/bfd-raw-auth-md5.pcap "
-      
     - name: Create directory if it does not exist
       file:
         path: /home/forescout
         state: directory
     - name: Copy PCAP file to forescout user's home folder
       copy:
-        #src: "/home/aelbendary77/forescout-ansible-config/raw-auth-simple.zip "
         src:  "raw-auth-simple.zip"
         dest: "/home/forescout/raw-auth-simple.zip"
         owner: forescout
         group: forescout
+    - name: Install unzip package
+      become: true
+      apt:
+        name: unzip
+        state: present
+
     - name: Unzip file on remote machine
       unarchive:
         src: /home/forescout/raw-auth-simple.zip
@@ -105,63 +103,31 @@
         extra_opts: "-q"
         creates: /home/forescout/raw-auth-simple.pcap
 
-    # - name: Download pcap file to controller
-    #   get_url:
-    #   url: "{{ var_pcap_file_url }}"
-    #   dest: /home/ansible/pcap_file.pcap
-
-      
-    # - name: Copy pcap file to target
-    #   copy:
-    #     src: /home/ansible/pcap_file.pcap
-    #     dest: /home/forescout/pcap_file.pcap
-    #     remote_src: yes
-    #     owner: forescout
-    #     group: forescout
-    #     mode: 0644
-
 
 #######################################################
-   
+
+    - name: Update package cache
+      apt:
+        update_cache: yes
+
     - name: Install tcpreplay and tcpdump
-      package:
-        name: tcpreplay
-        state: present
-    
-    - name: install tcpdump
-      package:
-        name: tcpdump
-        state: present
+      become: yes
+      apt:
+        name:
+        - tcpdump
+        - tcpreplay
+      
+    - name: Bring up network interface 'replay'
+      command: ip link set dev replay up
+      become: true
 
     - name: Start tcpreplay process
-       #become_user: forescout
+      #become_user: forescout
       command: "sudo tcpreplay -i replay -t --loop=1000  /home/forescout/raw-auth-simple.pcap"
    
-   
-    # - name: Start tcpreplay process
-    #   shell: "sudo -u forescout tcpreplay -i replay -l 0 /home/forescout/capture.pcap"
 
     - name: Start tcpdump process
       shell: "sudo -u forescout sudo tcpdump -i replay -w ~/capture.pcap"
 
-- hosts: target
-  become: true
-  tasks:
-    - name: Retrieve current size of capture.pcap
-      shell: "du -h /home/forescout/capture.pcap | awk '{print $1}'"
-      register: capture_pcap_size
 
-    - name: Print current size of capture.pcap
-      debug:
-        msg: "Current size of capture.pcap is {{ capture_pcap_size.stdout }}"
-
-    - name: Remove capture.pcap
-      file:
-        path: /home/forescout/capture.pcap
-        state: absent
-
-    - name: Stop tcpreplay process
-      shell: "killall tcpreplay"
-
-    - name: Stop tcpdump process
-      shell: "killall tcpdump"
+################################################################
