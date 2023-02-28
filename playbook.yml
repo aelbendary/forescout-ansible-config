@@ -1,4 +1,4 @@
-- hosts: webserver
+- hosts: target
   become: true
   tasks:
     - name: Disable automatic updates
