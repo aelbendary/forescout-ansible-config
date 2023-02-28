@@ -1,3 +1,9 @@
 [target_machine]
 10.0.0.20
 
+
+[target:vars]
+ansible_user=aelbendary77
+ansible_become=true
+ansible_become_method=sudo
+ansible_become_pass=123
